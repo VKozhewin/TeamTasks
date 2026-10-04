@@ -1,0 +1,261 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Распределенная Канбан-Доска</title>
+    <script src="signalr.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #eef2f3;
+            margin: 20px;
+        }
+
+        .form-container {
+            max-width: 800px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 0 auto 30px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+
+        .form-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        input, textarea {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        input {
+            flex: 1;
+        }
+
+        textarea {
+            flex: 2;
+            resize: none;
+            height: 38px;
+        }
+
+        button.btn-add {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 0 20px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+            button.btn-add:hover {
+                background: #0056b3;
+            }
+
+        /* Стили колонок */
+        .board {
+            display: flex;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+            align-items: flex-start;
+        }
+
+        .column {
+            flex: 1;
+            background: #ebecf0;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            min-height: 400px;
+        }
+
+            .column h2 {
+                text-align: center;
+                color: #444;
+                font-size: 18px;
+                margin-top: 0;
+                padding-bottom: 10px;
+                border-bottom: 2px solid #ddd;
+            }
+
+        /* Стили карточки */
+        .task-card {
+            background: white;
+            padding: 15px;
+            margin-top: 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 5px solid #6c757d;
+            position: relative;
+        }
+
+        .column-New .task-card {
+            border-left-color: #007bff;
+        }
+
+        .column-InProgress .task-card {
+            border-left-color: #ffc107;
+        }
+
+        .column-Done .task-card {
+            border-left-color: #28a745;
+        }
+
+        .task-card h3 {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            color: #333;
+        }
+
+        .task-card p {
+            margin: 0 0 12px 0;
+            font-size: 14px;
+            color: #666;
+        }
+
+        /* Кнопки управления */
+        .actions {
+            display: flex;
+            gap: 5px;
+            justify-content: flex-end;
+        }
+
+            .actions button {
+                padding: 4px 8px;
+                font-size: 12px;
+                cursor: pointer;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                background: #fff;
+            }
+
+                .actions button.btn-delete {
+                    background: #dc3545;
+                    color: white;
+                    border: none;
+                }
+
+                    .actions button.btn-delete:hover {
+                        background: #bd2130;
+                    }
+
+                .actions button:hover:not(.btn-delete) {
+                    background: #f8f9fa;
+                }
+    </style>
+</head>
+<body>
+
+    <div class="form-container">
+        <h2>Создать новую задачу</h2>
+        <div class="form-group">
+            <input type="text" id="taskTitle" placeholder="Название задачи">
+            <textarea id="taskDesc" placeholder="Краткое описание..."></textarea>
+            <button class="btn-add" onclick="sendTask()">Добавить</button>
+        </div>
+    </div>
+
+    <div class="board">
+        <div class="column column-New">
+            <h2>Новые</h2>
+            <div id="list-New"></div>
+        </div>
+        <div class="column column-InProgress">
+            <h2>В работе</h2>
+            <div id="list-InProgress"></div>
+        </div>
+        <div class="column column-Done">
+            <h2>Выполнено</h2>
+            <div id="list-Done"></div>
+        </div>
+    </div>
+
+    <script>
+        // 1. Загрузка всех задач при старте
+        async function loadTasks() {
+            document.getElementById('list-New').innerHTML = '';
+            document.getElementById('list-InProgress').innerHTML = '';
+            document.getElementById('list-Done').innerHTML = '';
+
+            const response = await fetch('/api/tasks');
+            const tasks = await response.json();
+            tasks.forEach(task => renderTask(task));
+        }
+
+        
+        function renderTask(task) {
+            
+            const oldCard = document.getElementById(`task-${task.id}`);
+            if (oldCard) oldCard.remove();
+
+            const columnList = document.getElementById(`list-${task.status}`);
+            if (!columnList) return;
+
+            const card = document.createElement('div');
+            card.className = 'task-card';
+            card.id = `task-${task.id}`;
+
+            let actionButtons = '';
+            if (task.status === 'New') {
+                actionButtons += `<button onclick="moveTask(${task.id}, 'InProgress')">В работу →</button>`;
+            } else if (task.status === 'InProgress') {
+                actionButtons += `<button onclick="moveTask(${task.id}, 'New')">← В новые</button>`;
+                actionButtons += `<button onclick="moveTask(${task.id}, 'Done')">Готово →</button>`;
+            } else if (task.status === 'Done') {
+                actionButtons += `<button onclick="moveTask(${task.id}, 'InProgress')">← Вернуть</button>`;
+            }
+            actionButtons += `<button class="btn-delete" onclick="deleteTask(${task.id})">Удалить</button>`;
+
+            card.innerHTML = `
+                <h3>${task.title}</h3>
+                <p>${task.description}</p>
+                <div class="actions">${actionButtons}</div>
+            `;
+            columnList.appendChild(card);
+        }
+
+        async function sendTask() {
+            const title = document.getElementById('taskTitle').value;
+            const description = document.getElementById('taskDesc').value;
+            if (!title) return alert("Введите название!");
+
+            await fetch('/api/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ Title: title, Description: description, Status: "New" })
+            });
+
+            document.getElementById('taskTitle').value = '';
+            document.getElementById('taskDesc').value = '';
+        }
+
+        async function moveTask(id, newStatus) {
+            await fetch(`/api/tasks/${id}/status?newStatus=${newStatus}`, { method: 'PUT' });
+        }
+
+        async function deleteTask(id) {
+            if (confirm("Удалить задачу?")) {
+                await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+            }
+        }
+
+        const connection = new signalR.HubConnectionBuilder().withUrl("/taskHub").build();
+
+        connection.on("TaskCreated", function (task) { renderTask(task); });
+        connection.on("TaskUpdated", function (task) { renderTask(task); });
+        connection.on("TaskDeleted", function (id) {
+            const card = document.getElementById(`task-${id}`);
+            if (card) card.remove();
+        });
+
+        connection.start().then(() => { loadTasks(); });
+    </script>
+
+</body>
+</html>
